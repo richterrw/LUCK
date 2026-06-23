@@ -1,0 +1,21 @@
+# LUCK agent configuration. All money values are USD.
+
+symbol: SPCX                  # underlying to trade options on
+
+strategy:
+  opening_range_minutes: 15   # length of the opening range used for breakout
+  breakout_buffer_pct: 0.05   # % beyond the range required to trigger (anti-noise)
+  max_trades_per_day: 4       # cap on new entries per session
+  option_expiry: nearest      # "nearest" weekly expiry (0DTE-style intraday)
+  target_delta: 0.50          # pick the strike closest to this delta (~ATM)
+
+risk:
+  max_premium_per_trade: 500      # max $ spent on a single options entry
+  max_contracts: 5                # max contracts per position
+  stop_loss_pct: 0.30             # exit if position loses this fraction of premium
+  take_profit_pct: 0.50           # exit if position gains this fraction of premium
+  daily_loss_limit: 750           # kill switch: stop trading for the day at this loss
+  flatten_minutes_before_close: 15  # force-close all positions before the bell
+
+polling:
+  interval_seconds: 30          # how often the agent re-evaluates
