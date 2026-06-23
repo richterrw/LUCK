@@ -53,6 +53,30 @@ def monte_carlo_call(s0, k, vol, t, n_sims, seed=0):
     return price, std_err
 
 
+def your_turn(s0, k, vol, t, n_sims=100_000, seed=0):
+    """EXERCISE — fill in the two TODOs below, then run this file.
+
+    You already know how to simulate terminal prices (see monte_carlo_call).
+    Here we reuse that idea to answer a *probability* question.
+    """
+    rng = np.random.default_rng(seed)
+    z = rng.standard_normal(n_sims)
+    s_t = s0 * np.exp(-0.5 * vol**2 * t + vol * np.sqrt(t) * z)
+
+    # TODO 1: what fraction of simulated prices finished ABOVE the strike k?
+    #         Hint: `s_t > k` makes an array of True/False; True counts as 1.
+    #         Replace the 0.0 below.
+    prob_in_the_money = 0.0
+
+    # TODO 2 (stretch): a put buyer profits when s_t < k. Compute the AVERAGE
+    #         put payoff  max(k - s_t, 0)  across all paths.
+    #         Replace the 0.0 below.
+    avg_put_payoff = 0.0
+
+    print(f"P(finishes in the money) = {prob_in_the_money:.3f}")
+    print(f"average put payoff       = {avg_put_payoff:.3f}")
+
+
 def main():
     exact = bs_price(S0, K, T, VOL, is_call=True)
     print(f"Black-Scholes (closed form):  {exact:8.4f}")
@@ -66,6 +90,10 @@ def main():
     print("Notice: as sims grow, the MC estimate converges to the formula and")
     print("the standard error shrinks ~ 1/sqrt(n). That 1/sqrt(n) law is")
     print("everywhere in actuarial work — it's why reserving sims need to be big.")
+
+    print()
+    print("--- your exercise output ---")
+    your_turn(S0, K, VOL, T)
 
 
 if __name__ == "__main__":
