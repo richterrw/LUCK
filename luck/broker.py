@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
+from .selection import OptionQuote, pick_closest_delta
 from .strategy import Bar, Side
 
 
@@ -144,39 +145,78 @@ class AlpacaBroker:
 
         ctype = ContractType.CALL if side == Side.CALL else ContractType.PUT
         req = GetOptionContractsRequest(
-            underlying_symbols=[underlying], status=AssetStatus.ACTIVE, type=ctype, limit=200,
+            underlying_symbols=[underlying], status=AssetStatus.ACTIVE, type=ctype, limit=500,
         )
         contracts = self.trading.get_option_contracts(req).option_contracts or []
         if not contracts:
             return None
-        # Nearest expiry; among those, strike closest to target delta proxy.
+
+        # Restrict to the nearest expiry (intraday / 0DTE-style trading).
         contracts.sort(key=lambda c: c.expiration_date)
         nearest_exp = contracts[0].expiration_date
         same_exp = [c for c in contracts if c.expiration_date == nearest_exp]
-        chosen = self._closest_to_delta(same_exp, side, target_delta)
-        bid, ask, delta = self._quote_with_greeks(chosen.symbol)
-        return OptionContract(
-            symbol=chosen.symbol, strike=float(chosen.strike_price),
-            expiry=str(nearest_exp), side=side, ask=ask, bid=bid, delta=delta,
-        )
 
-    def _closest_to_delta(self, contracts, side, target_delta):  # pragma: no cover
-        # Without per-strike greeks pre-fetched, approximate ATM by strike vs.
-        # underlying; the live quote call below refines pricing.
-        und = self._last_underlying_price(contracts[0].underlying_symbol)
-        return min(contracts, key=lambda c: abs(float(c.strike_price) - und))
+        # Narrow to strikes within a band around spot to bound the snapshot
+        # request, then pick by real delta from option greeks.
+        und = self._last_underlying_price(underlying)
+        same_exp.sort(key=lambda c: abs(float(c.strike_price) - und))
+        candidates = same_exp[:25]
+
+        quotes = self._snapshot_quotes([c.symbol for c in candidates], candidates)
+        chosen = pick_closest_delta(quotes, target_delta)
+        if chosen is None:
+            # Greeks/quotes unavailable (e.g. no OPRA subscription): fall back to
+            # the nearest-strike contract and a delta proxy so the agent still
+            # functions, but log nothing here — caller decides.
+            fallback = candidates[0]
+            bid, ask = self._latest_quote(fallback.symbol)
+            return OptionContract(
+                symbol=fallback.symbol, strike=float(fallback.strike_price),
+                expiry=str(nearest_exp), side=side, ask=ask, bid=bid, delta=target_delta,
+            )
+        return OptionContract(
+            symbol=chosen.symbol, strike=chosen.strike, expiry=str(nearest_exp),
+            side=side, ask=chosen.ask, bid=chosen.bid, delta=chosen.delta,
+        )
 
     def _last_underlying_price(self, symbol):  # pragma: no cover
         from alpaca.data.requests import StockLatestTradeRequest
         req = StockLatestTradeRequest(symbol_or_symbols=symbol)
         return self._stock_data.get_stock_latest_trade(req)[symbol].price
 
-    def _quote_with_greeks(self, option_symbol):  # pragma: no cover
+    def _snapshot_quotes(self, symbols, contracts):  # pragma: no cover
+        """Fetch per-contract greeks + quotes and return OptionQuote records.
+
+        Returns [] if the snapshot endpoint yields no greeks (which triggers the
+        strike-proxy fallback in the caller).
+        """
+        from alpaca.data.requests import OptionSnapshotRequest
+
+        strike_by_symbol = {c.symbol: float(c.strike_price) for c in contracts}
+        try:
+            snaps = self._option_data.get_option_snapshot(
+                OptionSnapshotRequest(symbol_or_symbols=symbols)
+            )
+        except Exception:
+            return []
+
+        out: list[OptionQuote] = []
+        for sym, snap in (snaps or {}).items():
+            greeks = getattr(snap, "greeks", None)
+            quote = getattr(snap, "latest_quote", None)
+            if greeks is None or quote is None or greeks.delta is None:
+                continue
+            out.append(OptionQuote(
+                symbol=sym, strike=strike_by_symbol.get(sym, 0.0),
+                delta=greeks.delta, bid=quote.bid_price, ask=quote.ask_price,
+            ))
+        return out
+
+    def _latest_quote(self, option_symbol):  # pragma: no cover
         from alpaca.data.requests import OptionLatestQuoteRequest
         req = OptionLatestQuoteRequest(symbol_or_symbols=option_symbol)
         q = self._option_data.get_option_latest_quote(req)[option_symbol]
-        bid, ask = q.bid_price, q.ask_price
-        return bid, ask, 0.5  # delta proxy; greeks endpoint optional per plan
+        return q.bid_price, q.ask_price
 
     def buy_to_open(self, contract, contracts):  # pragma: no cover
         from alpaca.trading.requests import MarketOrderRequest

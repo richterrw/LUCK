@@ -61,6 +61,35 @@ python -m luck.main --once --dry-run
 LUCK_MODE=live python -m luck.main
 ```
 
+## Strike selection (real greeks)
+
+Live, the broker pulls Alpaca **option snapshots** (greeks + quotes) for the
+nearest-expiry chain and picks the strike whose **delta** is closest to
+`strategy.target_delta` (0.50 ≈ ATM; lower = further OTM). If greeks are
+unavailable (e.g. no OPRA data subscription), it falls back to the
+nearest-strike contract by spot. The selection math lives in `luck/selection.py`
+as a pure, tested function.
+
+## Backtesting
+
+Sanity-check the strategy and tune parameters before risking capital. The
+backtester runs the **real agent** over historical minute bars and prices
+options with Black-Scholes (no historical-options-data dependency).
+
+```bash
+# Try it immediately with synthetic data:
+python examples/generate_sample_data.py > examples/sample_spcx_minutes.csv
+python -m luck.backtest --data examples/sample_spcx_minutes.csv
+
+# With real bars (CSV header: timestamp,high,low,close in Eastern time):
+python -m luck.backtest --data spcx_minutes.csv --iv 0.9 --dte 3 --spread 0.01
+```
+
+Output reports trades, win rate, total/avg P&L, best/worst day, and max
+drawdown. **Caveats:** option prices are *modeled* (constant-IV Black-Scholes)
+with a flat spread — not real fills. Use it to validate logic and parameters,
+not as a P&L forecast. Garbage in (wrong IV / unrealistic spreads), garbage out.
+
 ## Test
 
 ```bash
@@ -68,8 +97,8 @@ pip install pytest
 pytest
 ```
 
-The strategy and risk logic are pure functions with no network dependency, so
-the test suite runs offline.
+The strategy, risk, selection, and backtest logic are pure functions with no
+network dependency, so the full suite (31 tests) runs offline.
 
 ## Disclaimer
 
